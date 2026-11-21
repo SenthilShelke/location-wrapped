@@ -113,3 +113,12 @@ Build output had an informational App Intents metadata warning because this app 
 
 - Text details now use a shared locale-aware percent formatter with exactly two fractional digits. Map annotations retain their existing whole-number formatter. Applies to Recap visits/geography, member lists, selected-place details, place chooser, legends and progress accessibility value. Calculations and persisted data unchanged.
 - PASS: unsigned iPhone build and signed update launched on the connected iPhone. Source audit confirms only annotation/cluster labels use whole-number mapPercent; all explicit detail percentages use detailPercent. No new tests for this formatting-only change.
+
+## Monitored-area stationary geography fix · 2026-11-20
+
+- Confirmed the undercount came from long distance-filter silence with no stationary interval. A pause-only callback can be absent; a late pause can also fail the anchor freshness guard. A fixed historical repair cutoff does not cover later gaps. Personal location traces and device exports remain outside this repository.
+- PASS: 39 core tests (five new regressions) and unsigned iPhone build. Tests cover fresh/accurate anchor acceptance, stale/poor/cross-session rejection, 18-hour silence without pause or visits, confirmation-time start, ending on exit, inside/outside/uncertain fixes, unsupported travel and restart gaps, one-time historical repair and preservation of input history. Sample evidence retains priority over area estimates.
+- PASS: in-memory repair of a locally held device snapshot restores known stay intervals as labeled visit-based estimates while preserving visits, raw observations, saved places and location samples. Unsupported gaps remain unknown. The repair cutoff advances once and remains fixed afterward.
+- PASS: signed installation on a physical iPhone. Verified a fresh high-accuracy location fix and an open 200 m monitored-area interval created by an actual Core Location inside-state callback. Existing visit, event and saved-place arrays are unchanged; original location samples are retained as an identical prefix. The on-device pre-migration backup matches the external pre-install archive byte-for-byte.
+- PASS: replay of the installed archive with its live monitoring session advances monitored-area time by exactly 60 seconds when the window advances one minute without additional readings.
+- Overnight/locked-phone departure, OS exit latency and battery use still need a sustained physical field trial; the initial live confirmation and software tests do not establish those outcomes.

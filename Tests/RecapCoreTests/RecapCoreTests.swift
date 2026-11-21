@@ -402,6 +402,73 @@ final class RecapCoreTests: XCTestCase {
         var finished = stay; finished.end = start.addingTimeInterval(3600)
         XCTAssertEqual(GeographyTimeline.totals(samples: [sample], window: window, stationary: [finished]).covered, 3600)
     }
+    func testFreshAreaAnchorDoesNotRequirePauseOrVisit() {
+        let session = UUID()
+        var sample = GeographySample(timestamp: start, received: start, latitude: 43.47, longitude: -80.5, accuracy: 8, session: session)
+        XCTAssertEqual(GeographyAreaTracking.radius(for: sample, now: start, session: session), 200)
+        XCTAssertNil(GeographyAreaTracking.radius(for: sample, now: start.addingTimeInterval(1800), session: session))
+        XCTAssertNil(GeographyAreaTracking.radius(for: sample, now: start, session: UUID()))
+        sample.accuracy = 1000
+        XCTAssertNil(GeographyAreaTracking.radius(for: sample, now: start, session: session))
+        sample.accuracy = 200
+        XCTAssertEqual(GeographyAreaTracking.radius(for: sample, now: start, session: session), 450)
+    }
+    func testConfirmedAreaCoversQuietDayFromConfirmationAndStopsAtExit() {
+        let sample = GeographySample(timestamp: start, received: start, latitude: 43.47, longitude: -80.5, accuracy: 8, session: UUID(), geography: Geography(city: "Waterloo", region: "ON", country: "Canada"))
+        let confirmed = start.addingTimeInterval(10)
+        var stay = GeographyAreaTracking.confirmInside(sample: sample, radius: 200, at: confirmed)
+        let end = start.addingTimeInterval(18 * 3600)
+        let live = GeographyTimeline.totals(samples: [sample], window: DateInterval(start: start, end: end), stationary: [stay], activeSession: sample.session)
+        XCTAssertEqual(live.cities[sample.geography!.cityKey], 18 * 3600 - 10)
+        XCTAssertEqual(live.missing, 10)
+        stay.end = end
+        let later = GeographyTimeline.totals(samples: [sample], window: DateInterval(start: start, duration: 20 * 3600), stationary: [stay], activeSession: sample.session)
+        XCTAssertEqual(later.covered, live.covered)
+        XCTAssertEqual(later.missing, 2 * 3600 + 10)
+    }
+    func testAreaFixKeepsLocalEvidenceAndReplacesOutsideOrAccurateEdge() {
+        let sample = GeographySample(timestamp: start, received: start, latitude: 43.47, longitude: -80.5, accuracy: 8, session: UUID())
+        var fresh = sample; fresh.id = UUID(); fresh.latitude += 0.0001
+        XCTAssertEqual(GeographyAreaTracking.action(for: fresh, anchor: sample, radius: 200), .keep)
+        fresh.latitude += 0.01
+        XCTAssertEqual(GeographyAreaTracking.action(for: fresh, anchor: sample, radius: 200), .replace)
+        fresh.latitude = sample.latitude; fresh.accuracy = 1000
+        XCTAssertEqual(GeographyAreaTracking.action(for: fresh, anchor: sample, radius: 200), .wait)
+        fresh.accuracy = -1
+        XCTAssertEqual(GeographyAreaTracking.action(for: fresh, anchor: sample, radius: 200), .wait)
+    }
+    func testAreaEvidenceDoesNotInventTravelOrBridgeRestart() {
+        let session = UUID()
+        let home = GeographySample(timestamp: start, received: start, latitude: 43.47, longitude: -80.5, accuracy: 8, session: session, geography: Geography(city: "Waterloo", region: "ON", country: "Canada"))
+        let away = GeographySample(timestamp: start.addingTimeInterval(19 * 3600), received: start, latitude: 43.4, longitude: -80.3, accuracy: 10, session: session, geography: Geography(city: "Cambridge", region: "ON", country: "Canada"))
+        var first = GeographyAreaTracking.confirmInside(sample: home, radius: 200, at: start)
+        first.end = start.addingTimeInterval(18 * 3600)
+        let second = GeographyAreaTracking.confirmInside(sample: away, radius: 200, at: away.timestamp)
+        let window = DateInterval(start: start, duration: 20 * 3600)
+        let t = GeographyTimeline.totals(samples: [home, away], window: window, stationary: [first, second], activeSession: session)
+        XCTAssertEqual(t.cities[home.geography!.cityKey], 18 * 3600)
+        XCTAssertEqual(t.cities[away.geography!.cityKey], 3600)
+        XCTAssertEqual(t.missing, 3600)
+        let restarted = GeographyTimeline.totals(samples: [home, away], window: window, stationary: [first, second], activeSession: UUID())
+        XCTAssertEqual(restarted.covered, 18 * 3600)
+    }
+    func testAreaRepairPreservesRawHistoryAndOnlyAdvancesCutoffOnce() throws {
+        let (visits, places) = Replay.day(start: start)
+        let samples = Replay.geography(start: start)
+        var archive = Archive(visits: visits, places: places, enabled: true, geographySamples: samples, geographyStartedAt: start, geographyBackfillThrough: start)
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let beforeVisits = try encoder.encode(archive.visits), beforeSamples = try encoder.encode(samples)
+        let cutoff = start.addingTimeInterval(4 * 3600)
+        GeographyAreaTracking.repair(&archive, through: cutoff)
+        GeographyAreaTracking.repair(&archive, through: cutoff.addingTimeInterval(3600))
+        XCTAssertEqual(archive.geographyBackfillThrough, cutoff)
+        XCTAssertEqual(archive.geographyAreaVersion, 1)
+        XCTAssertEqual(try encoder.encode(archive.visits), beforeVisits)
+        XCTAssertEqual(try encoder.encode(archive.geographySamples!), beforeSamples)
+        let t = GeographyTimeline.totals(samples: samples, window: DateInterval(start: start, duration: 8 * 3600), legacyVisits: visits, cutover: start, backfillThrough: archive.geographyBackfillThrough)
+        XCTAssertEqual(t.covered, 4 * 3600)
+        XCTAssertGreaterThan(t.visitEstimated, 0)
+    }
     func testBackfillOnlyFillsUncoveredTimeUntilFixedCutoff() {
         let v = Replay.day(start: start).0
         let samples = Replay.geography(start: start)

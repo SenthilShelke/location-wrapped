@@ -150,7 +150,7 @@ struct Dashboard: View {
                             Text("Includes \(duration(geography.visitEstimated)) estimated from recorded visits to restore earlier coverage.").font(.caption).foregroundStyle(.secondary)
                         }
                         if geography.stationaryEstimated > 0 {
-                            Text("Includes \(duration(geography.stationaryEstimated)) estimated while stationary.").font(.caption).foregroundStyle(.secondary)
+                            Text("Includes \(duration(geography.stationaryEstimated)) estimated within monitored location areas.").font(.caption).foregroundStyle(.secondary)
                         }
                         Text("Cities").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         ForEach(geography.cities.keys.sorted { geography.cities[$0]! > geography.cities[$1]! }, id: \.self) { key in
@@ -498,7 +498,7 @@ struct SettingsView: View {
                     if let resolved = store.data.geographySamples?.last(where: { $0.geography != nil }) {
                         Text("Last resolved geography: \(resolved.geography!.cityKey) at \(resolved.timestamp.formatted())").font(.caption)
                     }
-                    Text("Adaptive background capture uses moderate accuracy, automatic stationary pauses and significant-movement resumption. Low Power Mode uses coarser readings. Stationary pauses may reduce coverage; battery and locked-phone behavior need testing.").font(.caption).foregroundStyle(.secondary)
+                    Text("Fresh readings establish a low-power monitored area, so city time can continue while stationary. Area exits and new readings update it. Time is estimated; delayed updates, restarts or unavailable monitoring can leave gaps. Low Power Mode uses coarser readings.").font(.caption).foregroundStyle(.secondary)
                     Button(store.resolving ? "Resolving…" : "Retry unknown geography") { Task { await store.resolveUnknown() } }.disabled(store.resolving)
                 }
                 Section("Saved places") {

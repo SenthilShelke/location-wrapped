@@ -344,6 +344,35 @@ struct StationaryStay: Codable, Identifiable {
     var end: Date?
     var sampleID: UUID
     var session: UUID
+    var radius: Double?
+}
+enum GeographyAreaTracking {
+    enum FixAction { case keep, replace, wait }
+    // A fresh, reasonably accurate fix can establish a bounded monitored area.
+    // No visits, place assignments or same-city endpoint inference are used.
+    static func radius(for sample: GeographySample, now: Date, session: UUID) -> Double? {
+        guard sample.session == session, sample.accuracy >= 0, sample.accuracy <= 250,
+              (-10...120).contains(now.timeIntervalSince(sample.timestamp)),
+              sample.latitude.isFinite, sample.longitude.isFinite,
+              (-90...90).contains(sample.latitude), (-180...180).contains(sample.longitude) else { return nil }
+        return max(200, min(500, sample.accuracy * 2 + 50))
+    }
+    static func action(for sample: GeographySample, anchor: GeographySample, radius: Double) -> FixAction {
+        guard sample.session == anchor.session, sample.accuracy >= 0 else { return .wait }
+        let distance = Matching.distance(sample.latitude, sample.longitude, anchor.latitude, anchor.longitude)
+        if distance + sample.accuracy <= radius { return .keep }
+        if sample.accuracy <= 250 || distance - sample.accuracy > radius { return .replace }
+        return .wait
+    }
+    static func confirmInside(sample: GeographySample, radius: Double, at now: Date) -> StationaryStay {
+        // Count from the actual inside-state confirmation, never from an old fix.
+        StationaryStay(start: now, confirmed: now, sampleID: sample.id, session: sample.session, radius: radius)
+    }
+    static func repair(_ archive: inout Archive, through now: Date) {
+        guard (archive.geographyAreaVersion ?? 0) < 1 else { return }
+        archive.geographyBackfillThrough = max(archive.geographyBackfillThrough ?? .distantPast, now)
+        archive.geographyAreaVersion = 1
+    }
 }
 enum GeographyTimeline {
     static let maximumGap: TimeInterval = 15 * 60
@@ -380,7 +409,8 @@ enum GeographyTimeline {
         }
         let byID = Dictionary(uniqueKeysWithValues: samples.map { ($0.id, $0) }.uniquedByKey())
         for stay in stationary {
-            guard let sample = byID[stay.sampleID], sample.accuracy >= 0, sample.accuracy <= 1000 else { continue }
+            guard let sample = byID[stay.sampleID], sample.session == stay.session,
+                  sample.accuracy >= 0, sample.accuracy <= 1000 else { continue }
             // Only a live monitoring session can extend a stationary estimate.
             let end = stay.end ?? (stay.session == activeSession ? window.end : stay.confirmed)
             add(max(stay.start, sampleStart), end, sample.geography, 1)
@@ -442,6 +472,7 @@ struct Archive: Codable {
     var supersededVisits: [Visit]?
     var supersededPlaces: [SavedPlace]?
     var repairVersion: Int?
+    var geographyAreaVersion: Int?
 }
 
 enum InsightCard: String, CaseIterable, Identifiable {
